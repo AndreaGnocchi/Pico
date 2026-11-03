@@ -1,7 +1,7 @@
 use std::{iter::Peekable, str::CharIndices};
 
 #[derive(Clone, Debug, PartialEq)]
-enum TokenKind {
+pub enum TokenKind {
   Let,
   Fn,
   If,
@@ -53,7 +53,7 @@ struct Pos {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
-  kind: TokenKind,
+  pub kind: TokenKind,
   pos: Pos,
 }
 
