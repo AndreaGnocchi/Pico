@@ -5,8 +5,11 @@ use crate::lexer::Lexer;
 mod lexer;
 
 fn main() -> Result<()> {
-  let path = "src.pico"; // hardcode just for now to not have errors
-  let src_code = std::fs::read_to_string(path)?;
-  let lexer = Lexer::new(&src_code);
-  Ok(())
+    let path = std::env::args().nth(1).expect("usage: pico <file>");
+    let source = std::fs::read_to_string(&path)?;
+    for token in Lexer::new(&source) {
+        println!("{:?}", token);
+    }
+
+    Ok(())
 }
