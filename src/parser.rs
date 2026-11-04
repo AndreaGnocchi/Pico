@@ -1,6 +1,6 @@
 use crate::lexer::{Token, TokenKind};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BinaryOp {
   Add,       // +
   Sub,       // -
@@ -17,13 +17,13 @@ pub enum BinaryOp {
   Or,        // ||
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum UnaryOp {
   Neg,       // -
   Not,       // !
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
   Int(i64),
   Bool(bool),
@@ -44,7 +44,7 @@ pub enum Expr {
   },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Stmt {
   Let {
     name: String,
@@ -125,6 +125,7 @@ impl Parser {
       TokenKind::Fn => self.parse_fn(),
       _ => {
         let expr = self.parse_expr()?;
+        self.expect(TokenKind::Semi)?;
         Ok(Stmt::Expr(expr))
       }
     }
@@ -271,22 +272,20 @@ impl Parser {
 
     // Consume params
     let mut params = Vec::new();
-    while !self.check(&TokenKind::RParen) {
-      let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
-      let param_name = match ident_token.kind {
-        TokenKind::Ident(param_str) => {
-          self.advance();
-          param_str.clone()
+    if !self.check(&TokenKind::RParen) {
+      loop {
+        let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+        match ident_token.kind {
+          TokenKind::Ident(param_str) => {
+            self.advance();
+            params.push(param_str);
+          }
+          _ => return Err(ParseError::UnexpectedToken(ident_token)),
         }
-        _ => return Err(ParseError::UnexpectedToken(ident_token)),
-      };
-      params.push(param_name);
-
-      if self.check(&TokenKind::Comma) {
-        self.advance();
-      } else if !self.check(&TokenKind::RParen) {
-        let unexpected = self.peek().cloned().ok_or(ParseError::UnexpectedEOF)?;
-        return Err(ParseError::UnexpectedToken(unexpected));
+ 
+        if !self.match_token(&[TokenKind::Comma]) {
+          break;
+        }
       }
     }
     
@@ -572,5 +571,480 @@ impl Parser {
       }
     }
     false
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::lexer::Lexer;
+ 
+  fn parser_for(src: &str) -> Parser {
+    let tokens = Lexer::new(src)
+      .collect::<Result<Vec<Token>, _>>()
+      .expect("test source should lex");
+    Parser::new(tokens)
+  }
+ 
+  fn require_end<T>(parser: &Parser, value: T) -> Result<T, ParseError> {
+    if parser.is_at_end() {
+      Ok(value)
+    } else {
+      Err(ParseError::UnexpectedToken(parser.peek().unwrap().clone()))
+    }
+  }
+ 
+  fn parse_expr(src: &str) -> Result<Expr, ParseError> {
+    let mut parser = parser_for(src);
+    let expr = parser.parse_expr()?;
+    require_end(&parser, expr)
+  }
+ 
+  fn parse_stmt(src: &str) -> Result<Stmt, ParseError> {
+    let mut parser = parser_for(src);
+    let stmt = parser.parse_stmt()?;
+    require_end(&parser, stmt)
+  }
+ 
+  fn parse_program(src: &str) -> Result<Vec<Stmt>, ParseError> {
+    let mut parser = parser_for(src);
+    let mut stmts = Vec::new();
+    while !parser.is_at_end() {
+      stmts.push(parser.parse_stmt()?);
+    }
+    Ok(stmts)
+  }
+ 
+  fn int(n: i64) -> Expr { Expr::Int(n) }
+  fn id(name: &str) -> Expr { Expr::Ident(name.to_string()) }
+  fn bin(left: Expr, op: BinaryOp, right: Expr) -> Expr {
+    Expr::Binary { left: Box::new(left), op, right: Box::new(right) }
+  }
+  fn un(op: UnaryOp, right: Expr) -> Expr {
+    Expr::Unary { op, right: Box::new(right) }
+  }
+  fn call(callee: Expr, args: Vec<Expr>) -> Expr {
+    Expr::Call { callee: Box::new(callee), args }
+  }
+  fn print(expr: Expr) -> Stmt { Stmt::Print { expr } }
+ 
+  fn call_with_n_args(n: usize) -> String {
+    let args: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+    format!("f({})", args.join(", "))
+  }
+ 
+  #[test]
+  fn literals() {
+    assert_eq!(parse_expr("42").unwrap(), int(42));
+    assert_eq!(parse_expr("true").unwrap(), Expr::Bool(true));
+    assert_eq!(parse_expr("false").unwrap(), Expr::Bool(false));
+    assert_eq!(parse_expr("nil").unwrap(), Expr::Nil);
+    assert_eq!(parse_expr("x").unwrap(), id("x"));
+  }
+ 
+  #[test]
+  fn parentheses_override_precedence() {
+    assert_eq!(
+      parse_expr("(1 + 2) * 3").unwrap(),
+      bin(bin(int(1), BinaryOp::Add, int(2)), BinaryOp::Mul, int(3)),
+    );
+  }
+ 
+  #[test]
+  fn deeply_nested_parentheses() {
+    assert_eq!(parse_expr("((((((1))))))").unwrap(), int(1));
+  }
+ 
+  #[test]
+  fn mul_binds_tighter_than_add() {
+    assert_eq!(
+      parse_expr("1 + 2 * 3").unwrap(),
+      bin(int(1), BinaryOp::Add, bin(int(2), BinaryOp::Mul, int(3))),
+    );
+  }
+ 
+  #[test]
+  fn subtraction_is_left_associative() {
+    assert_eq!(
+      parse_expr("1 - 2 - 3").unwrap(),
+      bin(bin(int(1), BinaryOp::Sub, int(2)), BinaryOp::Sub, int(3)),
+    );
+  }
+ 
+  #[test]
+  fn division_and_mod_are_left_associative() {
+    assert_eq!(
+      parse_expr("8 / 4 / 2").unwrap(),
+      bin(bin(int(8), BinaryOp::Div, int(4)), BinaryOp::Div, int(2)),
+    );
+    assert_eq!(
+      parse_expr("a % b * c").unwrap(),
+      bin(bin(id("a"), BinaryOp::Mod, id("b")), BinaryOp::Mul, id("c")),
+    );
+  }
+ 
+  #[test]
+  fn arithmetic_binds_tighter_than_comparison() {
+    assert_eq!(
+      parse_expr("a < b + c").unwrap(),
+      bin(id("a"), BinaryOp::Less, bin(id("b"), BinaryOp::Add, id("c"))),
+    );
+  }
+ 
+  #[test]
+  fn comparison_binds_tighter_than_equality() {
+    assert_eq!(
+      parse_expr("a == b < c").unwrap(),
+      bin(id("a"), BinaryOp::Eq, bin(id("b"), BinaryOp::Less, id("c"))),
+    );
+  }
+ 
+  #[test]
+  fn and_binds_tighter_than_or() {
+    assert_eq!(
+      parse_expr("a || b && c").unwrap(),
+      bin(id("a"), BinaryOp::Or, bin(id("b"), BinaryOp::And, id("c"))),
+    );
+  }
+ 
+  #[test]
+  fn equality_binds_tighter_than_and() {
+    assert_eq!(
+      parse_expr("a && b == c").unwrap(),
+      bin(id("a"), BinaryOp::And, bin(id("b"), BinaryOp::Eq, id("c"))),
+    );
+  }
+ 
+  #[test]
+  fn logical_operators_are_left_associative() {
+    assert_eq!(
+      parse_expr("a || b || c").unwrap(),
+      bin(bin(id("a"), BinaryOp::Or, id("b")), BinaryOp::Or, id("c")),
+    );
+  }
+ 
+  #[test]
+  fn unary_binds_tighter_than_binary() {
+    assert_eq!(
+      parse_expr("-a + b").unwrap(),
+      bin(un(UnaryOp::Neg, id("a")), BinaryOp::Add, id("b")),
+    );
+    assert_eq!(
+      parse_expr("-a * b").unwrap(),
+      bin(un(UnaryOp::Neg, id("a")), BinaryOp::Mul, id("b")),
+    );
+    assert_eq!(
+      parse_expr("!a == b").unwrap(),
+      bin(un(UnaryOp::Not, id("a")), BinaryOp::Eq, id("b")),
+    );
+  }
+ 
+  #[test]
+  fn unary_operators_nest() {
+    assert_eq!(
+      parse_expr("!!x").unwrap(),
+      un(UnaryOp::Not, un(UnaryOp::Not, id("x"))),
+    );
+    assert_eq!(
+      parse_expr("- -x").unwrap(),
+      un(UnaryOp::Neg, un(UnaryOp::Neg, id("x"))),
+    );
+  }
+ 
+  #[test]
+  fn call_binds_tighter_than_unary() {
+    assert_eq!(
+      parse_expr("-f(1)").unwrap(),
+      un(UnaryOp::Neg, call(id("f"), vec![int(1)])),
+    );
+  }
+ 
+  #[test]
+  fn call_with_no_arguments() {
+    assert_eq!(parse_expr("f()").unwrap(), call(id("f"), vec![]));
+  }
+ 
+  #[test]
+  fn call_with_several_arguments() {
+    assert_eq!(
+      parse_expr("f(1, 2)").unwrap(),
+      call(id("f"), vec![int(1), int(2)]),
+    );
+  }
+ 
+  #[test]
+  fn call_arguments_are_full_expressions() {
+    assert_eq!(
+      parse_expr("f(1 + 2, g())").unwrap(),
+      call(
+        id("f"),
+        vec![bin(int(1), BinaryOp::Add, int(2)), call(id("g"), vec![])],
+      ),
+    );
+  }
+ 
+  #[test]
+  fn nested_calls() {
+    assert_eq!(
+      parse_expr("f(g(1))").unwrap(),
+      call(id("f"), vec![call(id("g"), vec![int(1)])]),
+    );
+  }
+ 
+  #[test]
+  fn chained_calls() {
+    assert_eq!(
+      parse_expr("f(1)(2)").unwrap(),
+      call(call(id("f"), vec![int(1)]), vec![int(2)]),
+    );
+  }
+ 
+  #[test]
+  fn call_argument_limit_is_255() {
+    match parse_expr(&call_with_n_args(255)).unwrap() {
+      Expr::Call { args, .. } => assert_eq!(args.len(), 255),
+      other => panic!("expected a call, got {:?}", other),
+    }
+    assert!(matches!(
+      parse_expr(&call_with_n_args(256)),
+      Err(ParseError::TooManyArguments(_))
+    ));
+  }
+ 
+  #[test]
+  fn malformed_expressions_are_errors() {
+    for src in [
+      "",
+      "1 +",
+      "* 2",
+      "-",
+      "(1 + 2",
+      ")",
+      "1 2",
+      "f(1,)",
+      "f(1",
+      "f(,)",
+    ] {
+      assert!(parse_expr(src).is_err(), "expected an error for {src:?}");
+    }
+  }
+ 
+  #[test]
+  fn let_statement() {
+    assert_eq!(
+      parse_stmt("let x = 1 + 2;").unwrap(),
+      Stmt::Let { name: "x".to_string(), init: bin(int(1), BinaryOp::Add, int(2)) },
+    );
+  }
+ 
+  #[test]
+  fn assign_statement() {
+    assert_eq!(
+      parse_stmt("x = 5;").unwrap(),
+      Stmt::Assign { name: "x".to_string(), value: int(5) },
+    );
+  }
+ 
+  #[test]
+  fn print_statement() {
+    assert_eq!(parse_stmt("print 1;").unwrap(), print(int(1)));
+  }
+ 
+  #[test]
+  fn return_with_and_without_value() {
+    assert_eq!(parse_stmt("return;").unwrap(), Stmt::Return { value: None });
+    assert_eq!(
+      parse_stmt("return 1;").unwrap(),
+      Stmt::Return { value: Some(int(1)) },
+    );
+  }
+ 
+  #[test]
+  fn expression_statement() {
+    assert_eq!(
+      parse_stmt("f(1);").unwrap(),
+      Stmt::Expr(call(id("f"), vec![int(1)])),
+    );
+  }
+ 
+  #[test]
+  fn double_equals_is_a_comparison_not_an_assignment() {
+    assert_eq!(
+      parse_stmt("x == 1;").unwrap(),
+      Stmt::Expr(bin(id("x"), BinaryOp::Eq, int(1))),
+    );
+  }
+ 
+  #[test]
+  fn if_without_else() {
+    assert_eq!(
+      parse_stmt("if x { print 1; }").unwrap(),
+      Stmt::If {
+        condition: id("x"),
+        then_branch: vec![print(int(1))],
+        else_branch: None,
+      },
+    );
+  }
+ 
+  #[test]
+  fn if_else() {
+    assert_eq!(
+      parse_stmt("if x { print 1; } else { print 2; }").unwrap(),
+      Stmt::If {
+        condition: id("x"),
+        then_branch: vec![print(int(1))],
+        else_branch: Some(vec![print(int(2))]),
+      },
+    );
+  }
+ 
+  #[test]
+  fn else_if_chain_nests_an_if_in_the_else_branch() {
+    assert_eq!(
+      parse_stmt("if a { print 1; } else if b { print 2; } else { print 3; }").unwrap(),
+      Stmt::If {
+        condition: id("a"),
+        then_branch: vec![print(int(1))],
+        else_branch: Some(vec![Stmt::If {
+          condition: id("b"),
+          then_branch: vec![print(int(2))],
+          else_branch: Some(vec![print(int(3))]),
+        }]),
+      },
+    );
+  }
+ 
+  #[test]
+  fn while_statement() {
+    assert_eq!(
+      parse_stmt("while i < 3 { i = i + 1; }").unwrap(),
+      Stmt::While {
+        condition: bin(id("i"), BinaryOp::Less, int(3)),
+        body: vec![Stmt::Assign {
+          name: "i".to_string(),
+          value: bin(id("i"), BinaryOp::Add, int(1)),
+        }],
+      },
+    );
+  }
+ 
+  #[test]
+  fn fn_with_zero_params_and_empty_body() {
+    assert_eq!(
+      parse_stmt("fn foo() {}").unwrap(),
+      Stmt::Fn { name: "foo".to_string(), params: vec![], body: vec![] },
+    );
+  }
+ 
+  #[test]
+  fn fn_with_several_params() {
+    assert_eq!(
+      parse_stmt("fn add(a, b, c) { return a + b + c; }").unwrap(),
+      Stmt::Fn {
+        name: "add".to_string(),
+        params: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        body: vec![Stmt::Return {
+          value: Some(bin(bin(id("a"), BinaryOp::Add, id("b")), BinaryOp::Add, id("c"))),
+        }],
+      },
+    );
+  }
+ 
+  #[test]
+  fn malformed_statements_are_errors() {
+    for src in [
+      "let x = 5",
+      "print 1",
+      "return 1",
+      "f(1)",
+      "let = 5;",
+      "let x 5;",
+      "let x = ;",
+      "x = ;",
+      "x = y = 1;",
+      "1 = 2;",
+      "print;",
+      "return",
+      "fn f(,) {}",
+      "fn f(a,) {}",
+      "fn f(a b) {}",
+      "fn (a) {}",
+      "fn f(a)",
+      "fn f(",
+      "if",
+      "if x",
+      "if x { print 1; } else",
+      "else { print 1; }",
+      "while",
+      "if x {",
+      "while true { print 1;",
+      "fn f() { let x = 5;",
+      "}",
+      "let x =",
+    ] {
+      assert!(parse_stmt(src).is_err(), "expected an error for {src:?}");
+    }
+  }
+ 
+  #[test]
+  fn stray_closing_brace_after_valid_code_is_an_error() {
+    assert!(parse_program("print 1; }").is_err());
+  }
+ 
+  #[test]
+  fn empty_program() {
+    assert_eq!(parse_program("").unwrap(), vec![]);
+    assert_eq!(parse_program("   \n  ").unwrap(), vec![]);
+  }
+ 
+  #[test]
+  fn design_doc_example_program() {
+    let src = "
+      let x = 10;
+      x = x + 1;
+ 
+      fn fib(n) {
+        if n < 2 { return n; }
+        return fib(n - 1) + fib(n - 2);
+      }
+ 
+      let i = 0;
+      while i < 10 {
+        print fib(i);
+        i = i + 1;
+      }
+    ";
+ 
+    let fib_call = |delta: i64| call(id("fib"), vec![bin(id("n"), BinaryOp::Sub, int(delta))]);
+ 
+    let expected = vec![
+      Stmt::Let { name: "x".to_string(), init: int(10) },
+      Stmt::Assign { name: "x".to_string(), value: bin(id("x"), BinaryOp::Add, int(1)) },
+      Stmt::Fn {
+        name: "fib".to_string(),
+        params: vec!["n".to_string()],
+        body: vec![
+          Stmt::If {
+            condition: bin(id("n"), BinaryOp::Less, int(2)),
+            then_branch: vec![Stmt::Return { value: Some(id("n")) }],
+            else_branch: None,
+          },
+          Stmt::Return {
+            value: Some(bin(fib_call(1), BinaryOp::Add, fib_call(2))),
+          },
+        ],
+      },
+      Stmt::Let { name: "i".to_string(), init: int(0) },
+      Stmt::While {
+        condition: bin(id("i"), BinaryOp::Less, int(10)),
+        body: vec![
+          print(call(id("fib"), vec![id("i")])),
+          Stmt::Assign { name: "i".to_string(), value: bin(id("i"), BinaryOp::Add, int(1)) },
+        ],
+      },
+    ];
+ 
+    assert_eq!(parse_program(src).unwrap(), expected);
   }
 }
