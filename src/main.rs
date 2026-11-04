@@ -1,8 +1,10 @@
 use std::process::ExitCode;
 
-use crate::{lexer::Lexer, parser::Parser};
+use crate::{compiler::Compiler, lexer::Lexer, parser::Parser};
 
+mod compiler;
 mod lexer;
+mod opcode;
 mod parser;
 
 fn main() -> ExitCode {
@@ -43,8 +45,17 @@ fn main() -> ExitCode {
     }
   }
 
-  for stmt in statements {
-    println!("{:?}", stmt);
+  let mut compiler = Compiler::new();
+  let program = match compiler.compile(&statements) {
+    Ok(ops) => ops,
+    Err(err) => {
+      eprintln!("Compiler error: {:?}", err);
+      return ExitCode::FAILURE;
+    }
+  };
+
+  for opcode in program.code {
+    println!("{:?}", opcode);
   }
 
   ExitCode::SUCCESS
