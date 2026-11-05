@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -87,6 +89,21 @@ pub enum ParseError {
 pub struct Parser {
   tokens: Vec<Token>,
   current: usize,
+}
+
+impl fmt::Display for ParseError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      ParseError::UnexpectedEOF => write!(f, "unexpected end of input"),
+      ParseError::UnexpectedToken(tok) => {
+        write!(f, "unexpected token {:?} at {}", tok.kind, tok.pos)
+      }
+      ParseError::TooManyArguments(Some(tok)) => {
+        write!(f, "too many arguments (near {:?} at {})", tok.kind, tok.pos)
+      }
+      ParseError::TooManyArguments(None) => write!(f, "too many arguments"),
+    }
+  }
 }
 
 impl Parser {

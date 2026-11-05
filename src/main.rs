@@ -1,11 +1,12 @@
 use std::process::ExitCode;
 
-use crate::{compiler::Compiler, lexer::Lexer, parser::Parser};
+use crate::{compiler::Compiler, lexer::Lexer, parser::Parser, vm::VM};
 
 mod compiler;
 mod lexer;
 mod opcode;
 mod parser;
+mod vm;
 
 fn main() -> ExitCode {
   let path = match std::env::args().nth(1) {
@@ -27,7 +28,7 @@ fn main() -> ExitCode {
   let tokens = match Lexer::new(&source).collect::<Result<Vec<_>, _>>() {
     Ok(tokens) => tokens,
     Err(err) => {
-      eprintln!("Lexer error: {:?}", err);
+      eprintln!("Lexer error: {}", err);
       return ExitCode::FAILURE;
     }
   };
@@ -39,24 +40,27 @@ fn main() -> ExitCode {
     match parser.parse_stmt() {
       Ok(stmt) => statements.push(stmt),
       Err(err) => {
-        eprintln!("Parse error: {:?}", err);
+        eprintln!("Parse error: {}", err);
         return ExitCode::FAILURE;
       }
     }
   }
 
-  let mut compiler = Compiler::new();
+  let compiler = Compiler::new();
   let program = match compiler.compile(&statements) {
     Ok(ops) => ops,
     Err(err) => {
-      eprintln!("Compiler error: {:?}", err);
+      eprintln!("Compiler error: {}", err);
       return ExitCode::FAILURE;
     }
   };
-
-  for opcode in program.code {
-    println!("{:?}", opcode);
+  
+  let mut vm = VM::new(program);
+  match vm.run() {
+    vm::RunResult::Success => ExitCode::SUCCESS,
+    vm::RunResult::Error(err) => {
+      eprintln!("Runtime error: {}", err);
+      ExitCode::FAILURE
+    }
   }
-
-  ExitCode::SUCCESS
 }

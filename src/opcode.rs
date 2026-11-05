@@ -9,7 +9,7 @@ pub enum Value {
   }, 
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opcode {
   // Constants & Literals
   Const(usize),

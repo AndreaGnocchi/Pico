@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::CharIndices};
+use std::{fmt, iter::Peekable, str::CharIndices};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
@@ -46,21 +46,43 @@ enum LexError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Pos {
+pub struct Pos {
   line: usize,
   col: usize,
+}
+
+impl fmt::Display for Pos {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}:{}", self.line, self.col)
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
   pub kind: TokenKind,
-  pos: Pos,
+  pub pos: Pos,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct LexErrorAt {
   kind: LexError,
   pos: Pos,
+}
+
+impl fmt::Display for LexError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      LexError::Unexpected(c) => write!(f, "unexpected character {c:?}"),
+      LexError::Expected(c) => write!(f, "expected {c:?}"),
+      LexError::InvalidNumber(s) => write!(f, "invalid number '{s}'"),
+    }
+  }
+}
+
+impl fmt::Display for LexErrorAt {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "lexer error at {}: {}", self.pos, self.kind)
+  }
 }
 
 pub struct Lexer<'a> {

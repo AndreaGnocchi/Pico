@@ -1,4 +1,4 @@
-use std::collections::{HashMap};
+use std::{collections::HashMap, fmt};
 
 use crate::{opcode::{Opcode, Value}, parser::{BinaryOp, Expr, Stmt, UnaryOp}};
 
@@ -44,6 +44,24 @@ pub struct Compiler {
   fns: Vec<FnCtx>,
 }
 
+impl fmt::Display for CompilerError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      CompilerError::NonJumpOpcode(op) => {
+        write!(f, "internal error: tried to patch a non-jump opcode ({op})")
+      }
+      CompilerError::AlreadyExistingVariable(name) => {
+        write!(f, "variable '{name}' is already declared in this scope")
+      }
+      CompilerError::FunctionNotAtTopLevel(name) => {
+        write!(f, "function '{name}' must be declared at top level")
+      }
+      CompilerError::ReturnOutsideFunction => {
+        write!(f, "'return' used outside of a function")
+      }
+    }
+  }
+}
 
 impl Compiler {
   pub fn new() -> Self {
@@ -558,7 +576,7 @@ mod tests {
     );
   }
 
-    #[test]
+  #[test]
   fn locals_get_consecutive_slots_and_are_popped_in_pairs() {
     assert_eq!(
       code("if true { let a = 1; let b = 2; print a + b; }"),
@@ -749,7 +767,7 @@ mod tests {
     ));
   }
 
-    #[test]
+  #[test]
   fn design_doc_example_program() {
     use Opcode::*;
     let p = program(
