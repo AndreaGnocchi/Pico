@@ -334,3 +334,471 @@ impl Compiler {
     Ok(())
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{lexer::Lexer, parser::Parser};
+
+  fn compile_src(src: &str) -> Result<Program, CompilerError> {
+    let tokens = Lexer::new(src)
+      .collect::<Result<Vec<_>,_>>()
+      .expect("test source should lex");
+    let mut parser = Parser::new(tokens);
+    let mut stmts = Vec::new();
+    while !parser.is_at_end() {
+      stmts.push(parser.parse_stmt().expect("test source should parse"));
+    }
+    
+    Compiler::new().compile(&stmts)
+  }
+
+  fn program(src: &str) -> Program {
+    compile_src(src).expect("test source should compile")
+  }
+
+  fn code(src: &str) -> Vec<Opcode> {
+    program(src).code
+  }
+
+  fn binary_tail(op: &str) -> Vec<Opcode> {
+    let c = code(&format!("print 1 {op} 2;"));
+    c[2..c.len() - 1].to_vec()
+  }
+
+  #[test]
+  fn arithmetic_respects_precedence() {
+    let p = program("print 1 + 2 * 3;");
+    assert_eq!(
+      p.code,
+      vec![
+        Opcode::Const(0), Opcode::Const(1), Opcode::Const(2),
+        Opcode::Mul, Opcode::Add, Opcode::Print,
+      ]
+    );
+    assert_eq!(p.constants, vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+  }
+ 
+  #[test]
+  fn parentheses_change_emission_order() {
+    assert_eq!(
+      code("print (1 + 2) * 3;"),
+      vec![
+        Opcode::Const(0), Opcode::Const(1), Opcode::Add,
+        Opcode::Const(2), Opcode::Mul, Opcode::Print,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn literals() {
+    assert_eq!(
+      code("print true; print false; print nil;"),
+      vec![
+        Opcode::True, Opcode::Print,
+        Opcode::False, Opcode::Print,
+        Opcode::Nil, Opcode::Print,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn unary_operators() {
+    assert_eq!(
+      code("print -1; print !true;"),
+      vec![
+        Opcode::Const(0), Opcode::Neg, Opcode::Print,
+        Opcode::True, Opcode::Not, Opcode::Print,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn arithmetic_operators() {
+    assert_eq!(binary_tail("+"), vec![Opcode::Add]);
+    assert_eq!(binary_tail("-"), vec![Opcode::Sub]);
+    assert_eq!(binary_tail("*"), vec![Opcode::Mul]);
+    assert_eq!(binary_tail("/"), vec![Opcode::Div]);
+    assert_eq!(binary_tail("%"), vec![Opcode::Mod]);
+  }
+ 
+  #[test]
+  fn comparison_operators_use_only_eq_lt_le() {
+    assert_eq!(binary_tail("=="), vec![Opcode::Eq]);
+    assert_eq!(binary_tail("!="), vec![Opcode::Eq, Opcode::Not]);
+    assert_eq!(binary_tail("<"), vec![Opcode::Lt]);
+    assert_eq!(binary_tail("<="), vec![Opcode::Le]);
+    assert_eq!(binary_tail(">"), vec![Opcode::Le, Opcode::Not]);
+    assert_eq!(binary_tail(">="), vec![Opcode::Lt, Opcode::Not]);
+  }
+ 
+  #[test]
+  fn expression_statement_discards_its_value() {
+    assert_eq!(code("1;"), vec![Opcode::Const(0), Opcode::Pop]);
+  }
+ 
+  #[test]
+  fn and_short_circuits_and_keeps_left_value_when_falsy() {
+    assert_eq!(
+      code("print true && false;"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(2),
+        Opcode::Pop,
+        Opcode::False,
+        Opcode::Print,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn or_short_circuits_and_keeps_left_value_when_truthy() {
+    assert_eq!(
+      code("print true || false;"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(1),
+        Opcode::Jump(2),
+        Opcode::Pop,
+        Opcode::False,
+        Opcode::Print,
+      ]
+    );
+  }
+
+  #[test]
+  fn top_level_variables_are_globals() {
+    let p = program("let x = 1; x = x + 2; print x;");
+    assert_eq!(
+      p.code,
+      vec![
+        Opcode::Const(0), Opcode::SetGlobal(0),
+        Opcode::GetGlobal(0), Opcode::Const(1), Opcode::Add, Opcode::SetGlobal(0),
+        Opcode::GetGlobal(0), Opcode::Print,
+      ]
+    );
+    assert_eq!(p.globals, 1);
+  }
+ 
+  #[test]
+  fn each_global_name_gets_its_own_index() {
+    let p = program("let a = 1; let b = 2; print a + b;");
+    assert_eq!(p.globals, 2);
+    assert_eq!(
+      &p.code[4..],
+      &[Opcode::GetGlobal(0), Opcode::GetGlobal(1), Opcode::Add, Opcode::Print]
+    );
+  }
+  
+  #[test]
+  fn if_without_else_pops_the_condition_exactly_once_on_each_path() {
+    assert_eq!(
+      code("if true { print 1; }"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(4),
+        Opcode::Pop,
+        Opcode::Const(0),
+        Opcode::Print,
+        Opcode::Jump(1),
+        Opcode::Pop,
+      ]
+    );
+  }
+
+  #[test]
+  fn if_else() {
+    assert_eq!(
+      code("if true { print 1; } else { print 2; }"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(4),
+        Opcode::Pop,
+        Opcode::Const(0),
+        Opcode::Print,
+        Opcode::Jump(3),
+        Opcode::Pop,
+        Opcode::Const(1),
+        Opcode::Print,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn while_loops_back_to_the_condition() {
+    assert_eq!(
+      code("while true { print 1; }"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(4),
+        Opcode::Pop,
+        Opcode::Const(0),
+        Opcode::Print,
+        Opcode::Loop(-6),
+        Opcode::Pop,
+      ]
+    );
+  }
+
+  #[test]
+  fn block_local_lives_on_the_stack_and_is_popped_at_block_end() {
+    assert_eq!(
+      code("if true { let a = 1; print a; }"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(6),
+        Opcode::Pop,
+        Opcode::Const(0),
+        Opcode::GetLocal(1),
+        Opcode::Print,
+        Opcode::Pop,
+        Opcode::Jump(1),
+        Opcode::Pop,
+      ]
+    );
+  }
+
+    #[test]
+  fn locals_get_consecutive_slots_and_are_popped_in_pairs() {
+    assert_eq!(
+      code("if true { let a = 1; let b = 2; print a + b; }"),
+      vec![
+        Opcode::True,
+        Opcode::JumpIfFalse(10),
+        Opcode::Pop,
+        Opcode::Const(0),
+        Opcode::Const(1),
+        Opcode::GetLocal(1),
+        Opcode::GetLocal(2),
+        Opcode::Add,
+        Opcode::Print,
+        Opcode::Pop,
+        Opcode::Pop,
+        Opcode::Jump(1),
+        Opcode::Pop,
+      ]
+    );
+  }
+ 
+  #[test]
+  fn inner_local_shadows_a_global() {
+    assert_eq!(
+      code("let a = 1; if true { let a = 2; print a; }"),
+      vec![
+        Opcode::Const(0), Opcode::SetGlobal(0),
+        Opcode::True,
+        Opcode::JumpIfFalse(6),
+        Opcode::Pop,
+        Opcode::Const(1),
+        Opcode::GetLocal(1),
+        Opcode::Print,
+        Opcode::Pop,
+        Opcode::Jump(1),
+        Opcode::Pop,
+      ]
+    );
+  }
+
+  #[test]
+  fn assigning_to_a_block_local_uses_set_local() {
+    let c = code("if true { let a = 1; a = 2; }");
+    assert!(c.contains(&Opcode::SetLocal(1)));
+    assert!(!c.contains(&Opcode::SetGlobal(0)));
+  }
+ 
+  #[test]
+  fn redeclaring_a_local_in_the_same_block_is_an_error() {
+    assert!(matches!(
+      compile_src("if true { let a = 1; let a = 2; }"),
+      Err(CompilerError::AlreadyExistingVariable(_))
+    ));
+  }
+
+  #[test]
+  fn function_definition_and_call() {
+    let p = program("fn f(a, b) { return a + b; } print f(1, 2);");
+    assert_eq!(
+      p.code,
+      vec![
+        Opcode::Jump(6),
+        Opcode::GetLocal(1),
+        Opcode::GetLocal(2),
+        Opcode::Add,
+        Opcode::Ret,
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Const(0),
+        Opcode::SetGlobal(0),
+        Opcode::GetGlobal(0),
+        Opcode::Const(1),
+        Opcode::Const(2),
+        Opcode::Call(2),
+        Opcode::Print,
+      ]
+    );
+    assert_eq!(
+      p.constants,
+      vec![Value::Function { addr: 1, arity: 2 }, Value::Int(1), Value::Int(2)]
+    );
+  }
+
+  #[test]
+  fn function_without_return_falls_off_with_nil() {
+    assert_eq!(
+      code("fn f() {}"),
+      vec![
+        Opcode::Jump(2),
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Const(0),
+        Opcode::SetGlobal(0),
+      ]
+    );
+  }
+ 
+  #[test]
+  fn bare_return_returns_nil() {
+    assert_eq!(
+      code("fn f() { return; }"),
+      vec![
+        Opcode::Jump(4),
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Const(0),
+        Opcode::SetGlobal(0),
+      ]
+    );
+  }
+
+  #[test]
+  fn function_reads_globals_with_get_global() {
+    let p = program("let g = 1; fn f() { return g; }");
+    assert_eq!(
+      p.code,
+      vec![
+        Opcode::Const(0), Opcode::SetGlobal(0),
+        Opcode::Jump(4),
+        Opcode::GetGlobal(0),
+        Opcode::Ret,
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Const(1),
+        Opcode::SetGlobal(1),
+      ]
+    );
+    assert_eq!(p.constants[1], Value::Function { addr: 3, arity: 0 });
+  }
+ 
+  #[test]
+  fn param_shadows_a_global_of_the_same_name() {
+    let c = code("let n = 1; fn f(n) { return n; }");
+    assert_eq!(c[3], Opcode::GetLocal(1));
+  }
+ 
+  #[test]
+  fn function_can_call_itself_through_its_global() {
+    assert_eq!(
+      code("fn f(n) { return f(n); }"),
+      vec![
+        Opcode::Jump(6),
+        Opcode::GetGlobal(0),
+        Opcode::GetLocal(1),
+        Opcode::Call(1),
+        Opcode::Ret,
+        Opcode::Nil,
+        Opcode::Ret,
+        Opcode::Const(0),
+        Opcode::SetGlobal(0),
+      ]
+    );
+  }
+
+  #[test]
+  fn locals_do_not_leak_out_of_a_function() {
+    let c = code("fn f(a) { return a; } print a;");
+    assert_eq!(&c[c.len() - 2..], &[Opcode::GetGlobal(1), Opcode::Print]);
+  }
+
+  #[test]
+  fn return_outside_a_function_is_an_error() {
+    assert!(matches!(
+      compile_src("return 1;"),
+      Err(CompilerError::ReturnOutsideFunction)
+    ));
+  }
+ 
+  #[test]
+  fn nested_functions_are_rejected() {
+    assert!(matches!(
+      compile_src("fn f() { fn g() {} }"),
+      Err(CompilerError::FunctionNotAtTopLevel(_))
+    ));
+    assert!(matches!(
+      compile_src("if true { fn g() {} }"),
+      Err(CompilerError::FunctionNotAtTopLevel(_))
+    ));
+  }
+ 
+  #[test]
+  fn duplicate_parameter_names_are_an_error() {
+    assert!(matches!(
+      compile_src("fn f(a, a) {}"),
+      Err(CompilerError::AlreadyExistingVariable(_))
+    ));
+  }
+
+    #[test]
+  fn design_doc_example_program() {
+    use Opcode::*;
+    let p = program(
+      "
+      let x = 10;
+      x = x + 1;
+      fn fib(n) {
+        if n < 2 { return n; }
+        return fib(n - 1) + fib(n - 2);
+      }
+      let i = 0;
+      while i < 10 {
+        print fib(i);
+        i = i + 1;
+      }
+      ",
+    );
+ 
+    assert_eq!(
+      p.code,
+      vec![
+        Const(0), SetGlobal(0),
+        GetGlobal(0), Const(1), Add, SetGlobal(0),
+        Jump(23),
+        GetLocal(1), Const(2), Lt, JumpIfFalse(4),
+        Pop, GetLocal(1), Ret, Jump(1),
+        Pop,
+        GetGlobal(1), GetLocal(1), Const(3), Sub, Call(1),
+        GetGlobal(1), GetLocal(1), Const(4), Sub, Call(1),
+        Add, Ret,
+        Nil, Ret,
+        Const(5), SetGlobal(1),
+        Const(6), SetGlobal(2),
+        GetGlobal(2), Const(7), Lt, JumpIfFalse(10),
+        Pop,
+        GetGlobal(1), GetGlobal(2), Call(1), Print,
+        GetGlobal(2), Const(8), Add, SetGlobal(2),
+        Loop(-14),
+        Pop,
+      ]
+    );
+    assert_eq!(
+      p.constants,
+      vec![
+        Value::Int(10), Value::Int(1), Value::Int(2), Value::Int(1), Value::Int(2),
+        Value::Function { addr: 7, arity: 1 },
+        Value::Int(0), Value::Int(10), Value::Int(1),
+      ]
+    );
+    assert_eq!(p.globals, 3);
+  }
+}

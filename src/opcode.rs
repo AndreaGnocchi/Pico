@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
   Int(i64),
   Bool(bool),
@@ -9,7 +9,7 @@ pub enum Value {
   }, 
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
   // Constants & Literals
   Const(usize),
