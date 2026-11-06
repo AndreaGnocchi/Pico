@@ -35,7 +35,7 @@ pub enum TokenKind {
   GreaterEq,
   And,
   Or,
-  EOF,
+  Eof,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,7 +106,7 @@ impl<'a> Lexer<'a> {
     let pos = self.pos;
     let Some((start, c)) = self.advance() else {
       return Ok(Token {
-        kind: TokenKind::EOF,
+        kind: TokenKind::Eof,
         pos,
       });
     };
@@ -165,10 +165,7 @@ impl<'a> Lexer<'a> {
   }
   
   fn skip_trivia(&mut self) {
-    loop {
-      let Some(&(_, c)) = self.chars.peek() else {
-        break;
-      };
+    while let Some(&(_, c)) = self.chars.peek() {
       
       match c {
         c if c.is_whitespace() => {
@@ -271,7 +268,7 @@ impl<'a> Iterator for Lexer<'a> {
   fn next(&mut self) -> Option<Self::Item> {
     match self.next_token() {
       Ok(token) => {
-        if token.kind == TokenKind::EOF {
+        if token.kind == TokenKind::Eof {
           None
         } else {
           Some(Ok(token))
@@ -324,8 +321,8 @@ mod tests {
   #[test]
   fn next_token_returns_eof_repeatedly() {
     let mut lexer = Lexer::new("");
-    assert_eq!(lexer.next_token().unwrap().kind, EOF);
-    assert_eq!(lexer.next_token().unwrap().kind, EOF);
+    assert_eq!(lexer.next_token().unwrap().kind, Eof);
+    assert_eq!(lexer.next_token().unwrap().kind, Eof);
   }
 
   #[test]
@@ -549,7 +546,7 @@ mod tests {
     let mut lexer = Lexer::new("a\n");
     lexer.next_token().unwrap();
     let eof = lexer.next_token().unwrap();
-    assert_eq!(eof.kind, EOF);
+    assert_eq!(eof.kind, Eof);
     assert_eq!(eof.pos, pos(2, 1));
   }
 

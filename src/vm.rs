@@ -212,7 +212,7 @@ impl VM {
         Opcode::Jump(offset) => self.jump(offset)?,
         Opcode::JumpIfFalse(offset) => {
           let cond = self.stack.last().ok_or(RuntimeErrorKind::StackUnderflow)?;
-          if !Self::is_truthy(&cond) {
+          if !Self::is_truthy(cond) {
             self.jump(offset)?;
           }
         }
@@ -313,7 +313,6 @@ impl VM {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use Opcode;
 
   fn run_vm(code: Vec<Opcode>, constants: Vec<Value>, globals: usize) -> (RunResult, VM) {
     let mut vm = VM::new(Program {

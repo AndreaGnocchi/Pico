@@ -81,7 +81,7 @@ pub enum Stmt {
 
 #[derive(Debug)]
 pub enum ParseError {
-  UnexpectedEOF,
+  UnexpectedEof,
   UnexpectedToken(Token),
   TooManyArguments(Option<Token>),
 }
@@ -94,7 +94,7 @@ pub struct Parser {
 impl fmt::Display for ParseError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      ParseError::UnexpectedEOF => write!(f, "unexpected end of input"),
+      ParseError::UnexpectedEof => write!(f, "unexpected end of input"),
       ParseError::UnexpectedToken(tok) => {
         write!(f, "unexpected token {:?} at {}", tok.kind, tok.pos)
       }
@@ -123,14 +123,12 @@ impl Parser {
  */
   
   pub fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-    let token = self.peek().ok_or(ParseError::UnexpectedEOF)?;
+    let token = self.peek().ok_or(ParseError::UnexpectedEof)?;
 
-    if let TokenKind::Ident(_) = &token.kind {
-      if let Some(next_token) = self.tokens.get(self.current + 1) {
-        if next_token.kind == TokenKind::Assign {
-          return self.parse_assign();
-        }
-      }
+    if matches!(token.kind, TokenKind::Ident(_))
+      && self.tokens.get(self.current + 1).is_some_and(|next| next.kind == TokenKind::Assign)
+    {
+      return self.parse_assign();
     }
     
     match token.kind {
@@ -154,7 +152,7 @@ impl Parser {
     self.expect(TokenKind::Let)?; 
 
     // Consume variable name
-    let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+    let ident_token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
     let name = match &ident_token.kind {
       TokenKind::Ident(name_str) => {
         self.advance();
@@ -178,7 +176,7 @@ impl Parser {
   // IDENT "=" expr ";"
   fn parse_assign(&mut self) -> Result<Stmt, ParseError> {
     // Consume variable name
-    let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+    let ident_token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
     let name = match &ident_token.kind {
       TokenKind::Ident(name_str) => {
         self.advance();
@@ -275,7 +273,7 @@ impl Parser {
     self.expect(TokenKind::Fn)?;
 
     // Consume func name
-    let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+    let ident_token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
     let name = match &ident_token.kind {
       TokenKind::Ident(name_str) => {
         self.advance();
@@ -291,7 +289,7 @@ impl Parser {
     let mut params = Vec::new();
     if !self.check(&TokenKind::RParen) {
       loop {
-        let ident_token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+        let ident_token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
         match ident_token.kind {
           TokenKind::Ident(param_str) => {
             self.advance();
@@ -486,7 +484,7 @@ impl Parser {
         args.push(self.parse_expr()?);
         if !self.match_token(&[TokenKind::Comma]) {
           if !self.check(&TokenKind::RParen) {
-            let unexpected = self.peek().cloned().ok_or(ParseError::UnexpectedEOF)?;
+            let unexpected = self.peek().cloned().ok_or(ParseError::UnexpectedEof)?;
             return Err(ParseError::UnexpectedToken(unexpected));
           } else {
             break;
@@ -503,7 +501,7 @@ impl Parser {
 
   // primary = INT | "true" | "false" | "nil" | IDENT | "(" expr ")" ;
   fn parse_primary(&mut self) -> Result<Expr, ParseError> {
-    let token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+    let token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
 
     match token.kind {
       TokenKind::True => {
@@ -541,7 +539,7 @@ impl Parser {
   }
 
   fn expect(&mut self, expected: TokenKind) -> Result<Token, ParseError> {
-    let token = self.peek().ok_or(ParseError::UnexpectedEOF)?.clone();
+    let token = self.peek().ok_or(ParseError::UnexpectedEof)?.clone();
     
     if token.kind == expected {
       self.advance();
@@ -561,7 +559,7 @@ impl Parser {
 
   pub fn is_at_end(&self) -> bool {
     match self.peek() {
-      Some(token) => token.kind == TokenKind::EOF,
+      Some(token) => token.kind == TokenKind::Eof,
       None => true,
     }
   }
